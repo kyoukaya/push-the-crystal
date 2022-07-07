@@ -178,11 +178,6 @@ def save_rankings(players: List[Player]):
         w.writeheader()
         for player in players:
             w.writerow(vars(player))
-    try:
-        os.remove("./standings.csv")
-    except:
-        pass
-    shutil.copy(filename, "./standings.csv")
 
 
 def main(client: httpx.Client):
