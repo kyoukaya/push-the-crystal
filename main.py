@@ -9,13 +9,14 @@ from ratelimit import limits, sleep_and_retry
 from backoff import on_exception, expo
 from datetime import datetime
 import pytz
-import os
-import shutil
 
-logs.basicConfig(encoding='utf-8', level=logs.DEBUG,
-                 filemode='w',
-                 format='[%(levelname)s]%(asctime)s - %(message)s',
-                 datefmt='%d-%m-%y %H:%M:%S')
+logs.basicConfig(
+    encoding="utf-8",
+    level=logs.DEBUG,
+    filemode="w",
+    format="[%(levelname)s]%(asctime)s - %(message)s",
+    datefmt="%d-%m-%y %H:%M:%S",
+)
 
 dcs = [
     "Aether",
@@ -29,7 +30,7 @@ dcs = [
     "Primal",
 ]
 
-region = "eu"  # or na
+region = "na"  # na/eu
 base_url = f"https://{region}.finalfantasyxiv.com"
 
 # host https://img.finalfantasyxiv.com stripped
@@ -98,15 +99,13 @@ class Player:
         if len(self.name) == 0:
             raise Exception(f"name cannot be empty: {v.prettify()}")
         # data-href should be of form '/lodestone/character/123456/'
-        self.id = int(
-            v["data-href"].removeprefix("/lodestone/character/").strip("/"))
+        self.id = int(v["data-href"].removeprefix("/lodestone/character/").strip("/"))
         self.cur_rank = int(v.find(class_="order").text.strip())
         try:
             self.prev_rank = int(v.find(class_="prev_order").text.strip())
         except ValueError as e:
             self.prev_rank = 0
-        self.world, player_dc = v.find(
-            class_="xiv-lds-home-world").next.split(" ")
+        self.world, player_dc = v.find(class_="xiv-lds-home-world").next.split(" ")
         if len(self.world) == 0:
             raise Exception(f"world cannot be empty: {v.prettify()}")
         self.dc = player_dc.strip("[]")
@@ -116,8 +115,7 @@ class Player:
             self.points = int(v.find(class_="points").text.strip())
         except ValueError as e:
             self.points = 0
-        self.portrait = v.img["src"].removeprefix(
-            "https://img2.finalfantasyxiv.com/f/")
+        self.portrait = v.img["src"].removeprefix("https://img2.finalfantasyxiv.com/f/")
         if len(self.portrait) == 0:
             raise Exception(f"portrait cannot be empty: {v.prettify()}")
         self.tier = v.find(class_="tier").img["data-tooltip"]
@@ -141,8 +139,7 @@ class Player:
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=2, period=1)
 def get_ranking(client: httpx.Client, dc: str) -> str:
-    r = client.get(
-        f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}")
+    r = client.get(f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}")
     if r.status_code != 200:
         logs.error(f"get_ranking({dc}): http status code: {r.status_code}")
         raise httpx.HTTPError(r.status_code)
@@ -187,17 +184,20 @@ def main(client: httpx.Client):
     for dc in dcs:
         logs.info(f"start parsing dc {dc}")
         dc_resp = get_ranking(client, dc)
-        new_players = parse_rankings(BeautifulSoup(dc_resp, 'html.parser'))
+        new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
         if len(new_players) != 100:
             # Uncommon, but can happen
-            logs.warn(f"total number of players in dc {dc} is {len(new_players)}, not 100")
+            logs.warn(
+                f"total number of players in dc {dc} is {len(new_players)}, not 100"
+            )
         players.extend(new_players)
         logs.info(f"parsed rankings for {dc}")
 
     n_players = len(players)
     for i, player in enumerate(players):
         logs.debug(
-            f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)")
+            f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)"
+        )
         player_resp = get_player(client, player.id)
         player.parse_job(BeautifulSoup(player_resp, "html.parser"))
 
