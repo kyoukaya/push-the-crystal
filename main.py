@@ -30,7 +30,7 @@ dcs = [
     "Primal",
 ]
 
-region = "na"  # na/eu
+region = "eu"  # na/eu - eu has marginally faster pageload speeds
 base_url = f"https://{region}.finalfantasyxiv.com"
 
 # host https://img.finalfantasyxiv.com stripped
@@ -206,7 +206,7 @@ def main(client: httpx.Client):
         new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
         if len(new_players) != 100:
             # Uncommon, but can happen
-            logs.warn(
+            logs.warning(
                 f"total number of players in dc {dc} is {len(new_players)}, not 100"
             )
         players.extend(new_players)
