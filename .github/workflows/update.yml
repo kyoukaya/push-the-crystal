@@ -2,6 +2,7 @@ name: Update rankings
 on:
   schedule:
     - cron:  '30 10 * * *'
+  workflow_dispatch:
 jobs:
     resources:
         name: Update rankings
