@@ -142,7 +142,7 @@ class Player:
 @limits(calls=2, period=1)
 def get_ranking(client: httpx.Client, dc: str) -> str:
     r = client.get(
-        f"{base_url}/lodestone/ranking/crystallineconflict/result/1/?dcgroup={dc}")
+        f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}")
     if r.status_code != 200:
         logs.error(f"get_ranking({dc}): http status code: {r.status_code}")
         raise httpx.HTTPError(r.status_code)
@@ -192,12 +192,12 @@ def main(client: httpx.Client):
     for dc in dcs:
         logs.info(f"start parsing dc {dc}")
         dc_resp = get_ranking(client, dc)
-        players.extend(parse_rankings(BeautifulSoup(dc_resp, 'html.parser')))
+        new_players = parse_rankings(BeautifulSoup(dc_resp, 'html.parser'))
+        if len(new_players) != 100:
+            # Uncommon, but can happen
+            logs.warn(f"total number of players in dc {dc} is {len(new_players)}, not 100")
+        players.extend(new_players)
         logs.info(f"parsed rankings for {dc}")
-
-    if len(players) != len(dcs) * 100:
-        logs.warn("total num of players parsed is not equal to # dcs * 100"
-                  f"parsing may have gone wrong: {len(players)} != {len(dcs)}")
 
     n_players = len(players)
     for i, player in enumerate(players):
