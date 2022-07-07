@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 from bs4 import BeautifulSoup
 import httpx
 import time
@@ -86,9 +86,11 @@ class Player:
     world: str
     dc: str
     points: int
+    points_delta: int
     portrait: str  # prefix stripped https://img2.finalfantasyxiv.com/f/
     tier: str
     wins: int
+    wins_delta: int
     job: str
 
     def __str__(self) -> str:
@@ -105,26 +107,34 @@ class Player:
             self.prev_rank = int(v.find(class_="prev_order").text.strip())
         except ValueError as e:
             self.prev_rank = 0
-        self.world, player_dc = v.find(class_="xiv-lds-home-world").next.split(" ")
+        self.world, player_dc = v.find(class_="world").text.split(" ")
         if len(self.world) == 0:
             raise Exception(f"world cannot be empty: {v.prettify()}")
         self.dc = player_dc.strip("[]")
         if len(self.dc) == 0:
             raise Exception(f"dc cannot be empty: {v.prettify()}")
         try:
-            self.points = int(v.find(class_="points").text.strip())
+            self.points, self.points_delta = parse_points_or_wins(
+                v.find(class_="points").text.strip()
+            )
         except ValueError as e:
-            self.points = 0
-        self.portrait = v.img["src"].removeprefix("https://img2.finalfantasyxiv.com/f/")
+            self.points, self.points_delta = 0, 0
+        self.portrait = (
+            v.find(class_="face-wrapper")
+            .img["src"]
+            .removeprefix("https://img2.finalfantasyxiv.com/f/")
+        )
         if len(self.portrait) == 0:
             raise Exception(f"portrait cannot be empty: {v.prettify()}")
         self.tier = v.find(class_="tier").img["data-tooltip"]
         if len(self.tier) == 0:
             raise Exception(f"tier cannot be empty: {v.prettify()}")
         try:
-            self.wins = int(v.find(class_="wins").text.strip())
+            self.wins, self.wins_delta = parse_points_or_wins(
+                v.find(class_="wins").text.strip()
+            )
         except ValueError as e:
-            self.wins = 0
+            self.wins, self.wins_delta = 0
 
     def parse_job(self, v: BeautifulSoup):
         url = urlparse(v.find(class_="character__class_icon").img["src"])
@@ -133,6 +143,15 @@ class Player:
         except KeyError:
             logs.error(f"unknown jobicon url: {url.path}")
             self.job = "UNK"
+
+
+def parse_points_or_wins(s: str) -> Tuple[int, int]:
+    if len(s) == 0:
+        raise ValueError()
+    tmp = s.split(" ")
+    if len(tmp) == 1:
+        return [int(tmp[0]), 0]
+    return [int(tmp[0]), int(tmp[1])]
 
 
 @sleep_and_retry
