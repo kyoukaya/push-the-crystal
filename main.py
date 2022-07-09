@@ -1,4 +1,5 @@
-from typing import List, Tuple
+from statistics import median
+from typing import Any, List, Tuple
 from bs4 import BeautifulSoup
 import httpx
 import time
@@ -9,6 +10,7 @@ from ratelimit import limits, sleep_and_retry
 from backoff import on_exception, expo
 from datetime import datetime
 import pytz
+import concurrent.futures
 
 logs.basicConfig(
     encoding="utf-8",
@@ -94,7 +96,11 @@ class Player:
     job: str
 
     def __str__(self) -> str:
-        return f"Name:{self.name} ({self.world} [{self.dc}]) {self.tier} ({self.prev_rank} -> {self.cur_rank})\nwins: {self.wins} pts: {self.points}\nportrait: {self.portrait} id: {self.id}"
+        return (
+            f"Name:{self.name} ({self.world} [{self.dc}]) {self.tier} "
+            "({self.prev_rank} -> {self.cur_rank})\nwins: {self.wins} pts: {self.points}\n"
+            "portrait: {self.portrait} id: {self.id}"
+        )
 
     def parse_rankings(self, v: BeautifulSoup):
         self.name = v.h3.text
@@ -105,7 +111,7 @@ class Player:
         self.cur_rank = int(v.find(class_="order").text.strip())
         try:
             self.prev_rank = int(v.find(class_="prev_order").text.strip())
-        except ValueError as e:
+        except ValueError:
             self.prev_rank = 0
         self.world, player_dc = v.find(class_="world").text.split(" ")
         if len(self.world) == 0:
@@ -117,7 +123,7 @@ class Player:
             self.points, self.points_delta = parse_points_or_wins(
                 v.find(class_="points").text.strip()
             )
-        except ValueError as e:
+        except ValueError:
             self.points, self.points_delta = 0, 0
         self.portrait = (
             v.find(class_="face-wrapper")
@@ -133,8 +139,8 @@ class Player:
             self.wins, self.wins_delta = parse_points_or_wins(
                 v.find(class_="wins").text.strip()
             )
-        except ValueError as e:
-            self.wins, self.wins_delta = 0
+        except ValueError:
+            self.wins, self.wins_delta = 0, 0
 
     def parse_job(self, v: BeautifulSoup):
         url = urlparse(v.find(class_="character__class_icon").img["src"])
@@ -150,8 +156,8 @@ def parse_points_or_wins(s: str) -> Tuple[int, int]:
         raise ValueError()
     tmp = s.split(" ")
     if len(tmp) == 1:
-        return [int(tmp[0]), 0]
-    return [int(tmp[0]), int(tmp[1])]
+        return (int(tmp[0]), 0)
+    return (int(tmp[0]), int(tmp[1]))
 
 
 @sleep_and_retry
@@ -161,20 +167,22 @@ def get_ranking(client: httpx.Client, dc: str) -> str:
     r = client.get(f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}")
     if r.status_code != 200:
         logs.error(f"get_ranking({dc}): http status code: {r.status_code}")
-        raise httpx.HTTPError(r.status_code)
-    logs.info(f"get_ranking({dc}) in {r.elapsed}s")
+        raise httpx.HTTPError(str(r.status_code))
     return r.text
+
+
+get_player_stats = []
 
 
 @sleep_and_retry
 @on_exception(expo, httpx.HTTPError, max_tries=8)
-@limits(calls=2, period=1)
+@limits(calls=3, period=1)
 def get_player(client: httpx.Client, pid: int) -> str:
     r = client.get(f"{base_url}/lodestone/character/{pid}")
     if r.status_code != 200:
         logs.error(f"get_player({pid}): http status code: {r.status_code}")
-        raise httpx.HTTPError(r.status_code)
-    logs.info(f"get_player({pid}) in {r.elapsed}s")
+        raise httpx.HTTPError(str(r.status_code))
+    get_player_stats.append(r.elapsed.total_seconds())
     return r.text
 
 
@@ -213,16 +221,29 @@ def main(client: httpx.Client):
         logs.info(f"parsed rankings for {dc}")
 
     n_players = len(players)
-    for i, player in enumerate(players):
-        logs.debug(
-            f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)"
-        )
-        player_resp = get_player(client, player.id)
-        player.parse_job(BeautifulSoup(player_resp, "html.parser"))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures: List[Any] = []
+        for i, player in enumerate(players):
+            futures.append(
+                executor.submit(get_and_parse_job, client, n_players, i, player)
+            )
+        for _ in concurrent.futures.as_completed(futures):
+            pass
 
     save_rankings(players)
     # Estimated runtime: 15mins
     logs.info(f"parsing finished, total time taken {time.time() - t0}s")
+    logs.info(
+        f"get_player_stats: {min(get_player_stats)}, {max(get_player_stats)}, {median(get_player_stats)}"
+    )
+
+
+def get_and_parse_job(client, n_players, i, player):
+    logs.debug(
+        f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)"
+    )
+    player_resp = get_player(client, player.id)
+    player.parse_job(BeautifulSoup(player_resp, "html.parser"))
 
 
 with httpx.Client() as client:
