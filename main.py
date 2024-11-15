@@ -14,22 +14,18 @@ import concurrent.futures
 
 logs.basicConfig(
     encoding="utf-8",
-    level=logs.DEBUG,
+    level=logs.INFO,
     filemode="w",
     format="[%(levelname)s]%(asctime)s - %(message)s",
     datefmt="%d-%m-%y %H:%M:%S",
 )
 
+# TODO: automatically get DC groups by parsing the first page.
 dcs = [
-    "Aether",
     "Chaos",
-    "Crystal",
-    "Elemental",
-    "Gaia",
-    "Light",
-    "Mana",
     "Materia",
     "Primal",
+    "Gaia",
 ]
 
 region = "eu"  # na/eu - eu has marginally faster pageload speeds
@@ -37,46 +33,48 @@ base_url = f"https://{region}.finalfantasyxiv.com"
 
 # host https://img.finalfantasyxiv.com stripped
 jobicomap = {
-    "/lds/h/U/F5JzG9RPIKFSogtaKNBk455aYA.png": "GLA",
-    "/lds/h/V/iW7IBKQ7oglB9jmbn6LwdZXkWw.png": "PGL",
-    "/lds/h/N/St9rjDJB3xNKGYg-vwooZ4j6CM.png": "MRD",
-    "/lds/h/k/tYTpoSwFLuGYGDJMff8GEFuDQs.png": "LNC",
-    "/lds/h/Q/ZpqEJWYHj9SvHGuV9cIyRNnIkk.png": "ARC",
-    "/lds/h/s/gl62VOTBJrm7D_BmAZITngUEM8.png": "CNJ",
-    "/lds/h/4/IM3PoP6p06GqEyReygdhZNh7fU.png": "THM",
-    "/lds/h/v/YCN6F-xiXf03Ts3pXoBihh2OBk.png": "CRP",
-    "/lds/h/5/EEHVV5cIPkOZ6v5ALaoN5XSVRU.png": "BSM",
-    "/lds/h/G/Rq5wcK3IPEaAB8N-T9l6tBPxCY.png": "ARM",
-    "/lds/h/L/LbEjgw0cwO_2gQSmhta9z03pjM.png": "GSM",
-    "/lds/h/b/ACAcQe3hWFxbWRVPqxKj_MzDiY.png": "LTW",
-    "/lds/h/X/E69jrsOMGFvFpCX87F5wqgT_Vo.png": "WVR",
-    "/lds/h/C/bBVQ9IFeXqjEdpuIxmKvSkqalE.png": "ALC",
-    "/lds/h/m/1kMI2v_KEVgo30RFvdFCyySkFo.png": "CUL",
-    "/lds/h/A/aM2Dd6Vo4HW_UGasK7tLuZ6fu4.png": "MIN",
-    "/lds/h/I/jGRnjIlwWridqM-mIPNew6bhHM.png": "BTN",
-    "/lds/h/x/B4Azydbn7Prubxt7OL9p1LZXZ0.png": "FSH",
-    "/lds/h/E/d0Tx-vhnsMYfYpGe9MvslemEfg.png": "PLD",
-    "/lds/h/K/HW6tKOg4SOJbL8Z20GnsAWNjjM.png": "MNK",
-    "/lds/h/y/A3UhbjZvDeN3tf_6nJ85VP0RY0.png": "WAR",
-    "/lds/h/m/gX4OgBIHw68UcMU79P7LYCpldA.png": "DRG",
-    "/lds/h/F/KWI-9P3RX_Ojjn_mwCS2N0-3TI.png": "BRD",
-    "/lds/h/7/i20QvSPcSQTybykLZDbQCgPwMw.png": "WHM",
-    "/lds/h/P/V01m8YRBYcIs5vgbRtpDiqltSE.png": "BLM",
-    "/lds/h/e/VYP1LKTDpt8uJVvUT7OKrXNL9E.png": "ACN",
-    "/lds/h/h/4ghjpyyuNelzw1Bl0sM_PBA_FE.png": "SMN",
-    "/lds/h/7/WdFey0jyHn9Nnt1Qnm-J3yTg5s.png": "SCH",
-    "/lds/h/y/wdwVVcptybfgSruoh8R344y_GA.png": "ROG",
-    "/lds/h/0/Fso5hanZVEEAaZ7OGWJsXpf3jw.png": "NIN",
-    "/lds/h/E/vmtbIlf6Uv8rVp2YFCWA25X0dc.png": "MCH",
-    "/lds/h/l/5CZEvDOMYMyVn2td9LZigsgw9s.png": "DRK",
-    "/lds/h/1/erCgjnMSiab4LiHpWxVc-tXAqk.png": "AST",
-    "/lds/h/m/KndG72XtCFwaq1I1iqwcmO_0zc.png": "SAM",
-    "/lds/h/q/s3MlLUKmRAHy0pH57PnFStHmIw.png": "RDM",
-    "/lds/h/p/jdV3RRKtWzgo226CC09vjen5sk.png": "BLU",
-    "/lds/h/8/hg8ofSSOKzqng290No55trV4mI.png": "GNB",
-    "/lds/h/t/HK0jQ1y7YV9qm30cxGOVev6Cck.png": "DNC",
-    "/lds/h/7/cLlXUaeMPJDM2nBhIeM-uDmPzM.png": "RPR",
-    "/lds/h/g/_oYApASVVReLLmsokuCJGkEpk0.png": "SGE",
+    "/h/U/F5JzG9RPIKFSogtaKNBk455aYA.png": "GLA",
+    "/h/V/iW7IBKQ7oglB9jmbn6LwdZXkWw.png": "PGL",
+    "/h/N/St9rjDJB3xNKGYg-vwooZ4j6CM.png": "MRD",
+    "/h/k/tYTpoSwFLuGYGDJMff8GEFuDQs.png": "LNC",
+    "/h/Q/ZpqEJWYHj9SvHGuV9cIyRNnIkk.png": "ARC",
+    "/h/s/gl62VOTBJrm7D_BmAZITngUEM8.png": "CNJ",
+    "/h/4/IM3PoP6p06GqEyReygdhZNh7fU.png": "THM",
+    "/h/v/YCN6F-xiXf03Ts3pXoBihh2OBk.png": "CRP",
+    "/h/5/EEHVV5cIPkOZ6v5ALaoN5XSVRU.png": "BSM",
+    "/h/G/Rq5wcK3IPEaAB8N-T9l6tBPxCY.png": "ARM",
+    "/h/L/LbEjgw0cwO_2gQSmhta9z03pjM.png": "GSM",
+    "/h/b/ACAcQe3hWFxbWRVPqxKj_MzDiY.png": "LTW",
+    "/h/X/E69jrsOMGFvFpCX87F5wqgT_Vo.png": "WVR",
+    "/h/C/bBVQ9IFeXqjEdpuIxmKvSkqalE.png": "ALC",
+    "/h/m/1kMI2v_KEVgo30RFvdFCyySkFo.png": "CUL",
+    "/h/A/aM2Dd6Vo4HW_UGasK7tLuZ6fu4.png": "MIN",
+    "/h/I/jGRnjIlwWridqM-mIPNew6bhHM.png": "BTN",
+    "/h/x/B4Azydbn7Prubxt7OL9p1LZXZ0.png": "FSH",
+    "/h/E/d0Tx-vhnsMYfYpGe9MvslemEfg.png": "PLD",
+    "/h/K/HW6tKOg4SOJbL8Z20GnsAWNjjM.png": "MNK",
+    "/h/y/A3UhbjZvDeN3tf_6nJ85VP0RY0.png": "WAR",
+    "/h/m/gX4OgBIHw68UcMU79P7LYCpldA.png": "DRG",
+    "/h/F/KWI-9P3RX_Ojjn_mwCS2N0-3TI.png": "BRD",
+    "/h/7/i20QvSPcSQTybykLZDbQCgPwMw.png": "WHM",
+    "/h/P/V01m8YRBYcIs5vgbRtpDiqltSE.png": "BLM",
+    "/h/e/VYP1LKTDpt8uJVvUT7OKrXNL9E.png": "ACN",
+    "/h/h/4ghjpyyuNelzw1Bl0sM_PBA_FE.png": "SMN",
+    "/h/7/WdFey0jyHn9Nnt1Qnm-J3yTg5s.png": "SCH",
+    "/h/y/wdwVVcptybfgSruoh8R344y_GA.png": "ROG",
+    "/h/0/Fso5hanZVEEAaZ7OGWJsXpf3jw.png": "NIN",
+    "/h/E/vmtbIlf6Uv8rVp2YFCWA25X0dc.png": "MCH",
+    "/h/l/5CZEvDOMYMyVn2td9LZigsgw9s.png": "DRK",
+    "/h/1/erCgjnMSiab4LiHpWxVc-tXAqk.png": "AST",
+    "/h/m/KndG72XtCFwaq1I1iqwcmO_0zc.png": "SAM",
+    "/h/q/s3MlLUKmRAHy0pH57PnFStHmIw.png": "RDM",
+    "/h/p/jdV3RRKtWzgo226CC09vjen5sk.png": "BLU",
+    "/h/8/hg8ofSSOKzqng290No55trV4mI.png": "GNB",
+    "/h/t/HK0jQ1y7YV9qm30cxGOVev6Cck.png": "DNC",
+    "/h/7/cLlXUaeMPJDM2nBhIeM-uDmPzM.png": "RPR",
+    "/h/g/_oYApASVVReLLmsokuCJGkEpk0.png": "SGE",
+    "/h/C/WojNTqMJ_Ye1twvkIhw825zc20.png": "VPR",
+    "/h/_/kLob-U-yh652LQPX1NHpLlUYQY.png": "PCT",
 }
 
 
@@ -132,7 +130,11 @@ class Player:
         )
         if len(self.portrait) == 0:
             raise Exception(f"portrait cannot be empty: {v.prettify()}")
-        self.tier = v.find(class_="tier").img["data-tooltip"]
+        try:
+            self.tier = v.find(class_="tier").img["data-tooltip"]
+        except TypeError:
+            self.tier = "None"
+
         if len(self.tier) == 0:
             raise Exception(f"tier cannot be empty: {v.prettify()}")
         try:
@@ -143,10 +145,10 @@ class Player:
             self.wins, self.wins_delta = 0, 0
 
     def parse_job(self, v: BeautifulSoup):
-        url = urlparse(v.find(class_="character__class_icon").img["src"])
         try:
+            url = urlparse(v.find(class_="character__class_icon").img["src"])
             self.job = jobicomap[url.path]
-        except KeyError:
+        except:
             logs.error(f"unknown jobicon url: {url.path}")
             self.job = "UNK"
 
@@ -163,10 +165,10 @@ def parse_points_or_wins(s: str) -> Tuple[int, int]:
 @sleep_and_retry
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=2, period=1)
-def get_ranking(client: httpx.Client, dc: str) -> str:
-    r = client.get(f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}")
+def get_ranking(client: httpx.Client, dc: str, page: int) -> str:
+    r = client.get(f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}&page={page}")
     if r.status_code != 200:
-        logs.error(f"get_ranking({dc}): http status code: {r.status_code}")
+        logs.error(f"get_ranking({dc},{page}): http status code: {r.status_code}")
         raise httpx.HTTPError(str(r.status_code))
     return r.text
 
@@ -179,6 +181,8 @@ get_player_stats = []
 @limits(calls=3, period=1)
 def get_player(client: httpx.Client, pid: int) -> str:
     r = client.get(f"{base_url}/lodestone/character/{pid}")
+    if r.status_code == 403:
+        return ""
     if r.status_code != 200:
         logs.error(f"get_player({pid}): http status code: {r.status_code}")
         raise httpx.HTTPError(str(r.status_code))
@@ -208,19 +212,25 @@ def main(client: httpx.Client):
     logs.info("parser started")
     t0 = time.time()
     players: List[Player] = []
+    
     for dc in dcs:
-        logs.info(f"start parsing dc {dc}")
-        dc_resp = get_ranking(client, dc)
-        new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
-        if len(new_players) != 100:
-            # Uncommon, but can happen
-            logs.warning(
-                f"total number of players in dc {dc} is {len(new_players)}, not 100"
-            )
-        players.extend(new_players)
+
+        for page in range(1, 7):
+            logs.info(f"start parsing dc {dc} page {page}")
+            dc_resp = get_ranking(client, dc, page)
+            new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
+            players.extend(new_players)
+            if len(new_players) != 50:
+                # Uncommon, but can happen
+                logs.warning(
+                    f"total number of players in dc {dc} is {len(new_players)}, not 100"
+                )
+                break
+
         logs.info(f"parsed rankings for {dc}")
 
     n_players = len(players)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures: List[Any] = []
         for i, player in enumerate(players):
@@ -238,13 +248,13 @@ def main(client: httpx.Client):
     )
 
 
-def get_and_parse_job(client, n_players, i, player):
-    logs.debug(
+def get_and_parse_job(client: httpx.Client, n_players: int, i: int, player: Player):
+    logs.info(
         f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)"
     )
     player_resp = get_player(client, player.id)
     player.parse_job(BeautifulSoup(player_resp, "html.parser"))
 
 
-with httpx.Client() as client:
+with httpx.Client(http2=True) as client:
     main(client)
