@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import httpx
 import time
 import csv
+import asyncio
 from urllib.parse import urlparse
 import logging as logs
 from ratelimit import limits, sleep_and_retry
@@ -148,8 +149,8 @@ class Player:
         try:
             url = urlparse(v.find(class_="character__class_icon").img["src"])
             self.job = jobicomap[url.path]
-        except:
-            logs.error(f"unknown jobicon url: {url.path}")
+        except Exception as e:
+            logs.error(f"failed to parse job from {v}: {e}")
             self.job = "UNK"
 
 
@@ -165,8 +166,10 @@ def parse_points_or_wins(s: str) -> Tuple[int, int]:
 @sleep_and_retry
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=2, period=1)
-def get_ranking(client: httpx.Client, dc: str, page: int) -> str:
-    r = client.get(f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}&page={page}")
+async def get_ranking(client: httpx.AsyncClient, dc: str, page: int) -> str:
+    r = await client.get(
+        f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}&page={page}"
+    )
     if r.status_code != 200:
         logs.error(f"get_ranking({dc},{page}): http status code: {r.status_code}")
         raise httpx.HTTPError(str(r.status_code))
@@ -179,8 +182,8 @@ get_player_stats = []
 @sleep_and_retry
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=3, period=1)
-def get_player(client: httpx.Client, pid: int) -> str:
-    r = client.get(f"{base_url}/lodestone/character/{pid}")
+async def get_player(client: httpx.AsyncClient, pid: int) -> str:
+    r = await client.get(f"{base_url}/lodestone/character/{pid}")
     if r.status_code == 403:
         return ""
     if r.status_code != 200:
@@ -208,53 +211,55 @@ def save_rankings(players: List[Player]):
             w.writerow(vars(player))
 
 
-def main(client: httpx.Client):
+async def get_and_parse_job(
+    client: httpx.AsyncClient, n_players: int, i: int, player: Player
+):
+    logs.info(f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)")
+    player_resp = await get_player(client, player.id)
+    player.parse_job(BeautifulSoup(player_resp, "html.parser"))
+    logs.info(f"parsed player {player}")
+
+
+async def main():
     logs.info("parser started")
     t0 = time.time()
     players: List[Player] = []
-    
-    for dc in dcs:
 
-        for page in range(1, 7):
-            logs.info(f"start parsing dc {dc} page {page}")
-            dc_resp = get_ranking(client, dc, page)
-            new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
-            players.extend(new_players)
-            if len(new_players) != 50:
-                # Uncommon, but can happen
-                logs.warning(
-                    f"total number of players in dc {dc} is {len(new_players)}, not 100"
-                )
-                break
+    async with httpx.AsyncClient(http2=True) as client:
+        for dc in dcs:
+            for page in range(1, 7):
+                logs.info(f"start parsing dc {dc} page {page}")
+                # Assuming get_ranking is also async now
+                dc_resp = await get_ranking(client, dc, page)
+                new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
+                players.extend(new_players)
+                if len(new_players) != 50:
+                    logs.warning(
+                        f"total number of players in dc {dc} is {len(new_players)}, not 100"
+                    )
+                    break
 
-        logs.info(f"parsed rankings for {dc}")
+            logs.info(f"parsed rankings for {dc}")
 
-    n_players = len(players)
+        n_players = len(players)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures: List[Any] = []
-        for i, player in enumerate(players):
-            futures.append(
-                executor.submit(get_and_parse_job, client, n_players, i, player)
-            )
-        for _ in concurrent.futures.as_completed(futures):
-            pass
+        # Create tasks for all players
+        tasks = [
+            get_and_parse_job(client, n_players, i, player)
+            for i, player in enumerate(players)
+        ]
+
+        # Process in batches of 3 to maintain similar concurrency to original
+        for i in range(0, len(tasks), 3):
+            batch = tasks[i : i + 3]
+            await asyncio.gather(*batch)
 
     save_rankings(players)
-    # Estimated runtime: 15mins
     logs.info(f"parsing finished, total time taken {time.time() - t0}s")
     logs.info(
         f"get_player_stats: {min(get_player_stats)}, {max(get_player_stats)}, {median(get_player_stats)}"
     )
 
 
-def get_and_parse_job(client: httpx.Client, n_players: int, i: int, player: Player):
-    logs.info(
-        f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)"
-    )
-    player_resp = get_player(client, player.id)
-    player.parse_job(BeautifulSoup(player_resp, "html.parser"))
-
-
-with httpx.Client(http2=True) as client:
-    main(client)
+if __name__ == "__main__":
+    asyncio.run(main())
