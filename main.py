@@ -150,7 +150,7 @@ class Player:
             url = urlparse(v.find(class_="character__class_icon").img["src"])
             self.job = jobicomap[url.path]
         except Exception as e:
-            logs.error(f"failed to parse job from {v}: {e}")
+            logs.error(f"failed to parse job: {e}")
             self.job = "UNK"
 
 
@@ -211,13 +211,26 @@ def save_rankings(players: List[Player]):
             w.writerow(vars(player))
 
 
-async def get_and_parse_job(
-    client: httpx.AsyncClient, n_players: int, i: int, player: Player
+async def worker(
+    name: str, queue: asyncio.Queue, client: httpx.AsyncClient, n_players: int
 ):
-    logs.info(f"parsing player {player.name}: {player.id} ({i / n_players * 100:.1f}%)")
-    player_resp = await get_player(client, player.id)
-    player.parse_job(BeautifulSoup(player_resp, "html.parser"))
-    logs.info(f"parsed player {player}")
+    while True:
+        try:
+            # Get task from queue
+            i, player = await queue.get()
+
+            try:
+                logs.info(
+                    f"Worker {name}: parsing player {player.name}: {player.id} "
+                    f"({i / n_players * 100:.1f}%)"
+                )
+                player_resp = await get_player(client, player.id)
+                player.parse_job(BeautifulSoup(player_resp, "html.parser"))
+            finally:
+                # Always mark task as done, even if it fails
+                queue.task_done()
+        except asyncio.CancelledError:
+            break
 
 
 async def main():
@@ -226,10 +239,10 @@ async def main():
     players: List[Player] = []
 
     async with httpx.AsyncClient(http2=True) as client:
+        # Fetch all players first
         for dc in dcs:
             for page in range(1, 7):
                 logs.info(f"start parsing dc {dc} page {page}")
-                # Assuming get_ranking is also async now
                 dc_resp = await get_ranking(client, dc, page)
                 new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
                 players.extend(new_players)
@@ -243,16 +256,27 @@ async def main():
 
         n_players = len(players)
 
-        # Create tasks for all players
-        tasks = [
-            get_and_parse_job(client, n_players, i, player)
-            for i, player in enumerate(players)
+        # Create a queue for tasks
+        queue = asyncio.Queue()
+
+        workers = [
+            asyncio.create_task(worker(f"worker-{i}", queue, client, n_players))
+            for i in range(3)
         ]
 
-        # Process in batches of 3 to maintain similar concurrency to original
-        for i in range(0, len(tasks), 3):
-            batch = tasks[i : i + 3]
-            await asyncio.gather(*batch)
+        # Add all players to the queue
+        for i, player in enumerate(players):
+            await queue.put((i, player))
+
+        # Wait for all tasks to complete
+        await queue.join()
+
+        # Cancel workers
+        for w in workers:
+            w.cancel()
+
+        # Wait for workers to finish
+        await asyncio.gather(*workers, return_exceptions=True)
 
     save_rankings(players)
     logs.info(f"parsing finished, total time taken {time.time() - t0}s")
