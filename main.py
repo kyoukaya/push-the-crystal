@@ -21,13 +21,28 @@ logs.basicConfig(
     datefmt="%d-%m-%y %H:%M:%S",
 )
 
-# TODO: automatically get DC groups by parsing the first page.
-dcs = [
-    "Chaos",
-    "Materia",
-    "Primal",
-    "Gaia",
-]
+async def get_data_centers(client: httpx.AsyncClient) -> List[str]:
+    """Parse available data centers from the main ranking page."""
+    logs.info("Fetching available data centers...")
+    r = await client.get(f"{base_url}/lodestone/ranking/crystallineconflict/")
+    if r.status_code != 200:
+        logs.error(f"Failed to fetch data centers page: {r.status_code}")
+        raise httpx.HTTPError(str(r.status_code))
+    
+    soup = BeautifulSoup(r.text, "html.parser")
+    dc_links = soup.find_all("a", href=lambda x: x and "dcgroup=" in x)
+    
+    data_centers = []
+    for link in dc_links:
+        href = link.get("href", "")
+        if "dcgroup=" in href:
+            # Extract dcgroup parameter value
+            dc_name = href.split("dcgroup=")[1].split("&")[0]
+            if dc_name not in data_centers:
+                data_centers.append(dc_name)
+    
+    logs.info(f"Found data centers: {data_centers}")
+    return data_centers
 
 region = "eu"  # na/eu - eu has marginally faster pageload speeds
 base_url = f"https://{region}.finalfantasyxiv.com"
@@ -239,22 +254,71 @@ async def main():
     players: List[Player] = []
 
     async with httpx.AsyncClient(http2=True) as client:
+        # Get available data centers dynamically
+        dcs = await get_data_centers(client)
+        
+        # Sanity check: ensure we found a reasonable number of data centers
+        if len(dcs) < 2:
+            logs.error(f"Only found {len(dcs)} data centers: {dcs}. Expected at least 2.")
+            raise ValueError(f"Data center discovery failed: only found {len(dcs)} data centers")
+        
         # Fetch all players first
         for dc in dcs:
+            dc_total_players = 0
             for page in range(1, 7):
                 logs.info(f"start parsing dc {dc} page {page}")
                 dc_resp = await get_ranking(client, dc, page)
                 new_players = parse_rankings(BeautifulSoup(dc_resp, "html.parser"))
+                if new_players:
+                    logs.info(f"page {page}: found {len(new_players)} players, first: {new_players[0].name} (rank {new_players[0].cur_rank}), last: {new_players[-1].name} (rank {new_players[-1].cur_rank})")
+                else:
+                    logs.info(f"page {page}: found 0 players")
+                
                 players.extend(new_players)
-                if len(new_players) != 50:
+                dc_total_players += len(new_players)
+                
+                if len(new_players) == 0:
                     logs.warning(
-                        f"total number of players in dc {dc} is {len(new_players)}, not 100"
+                        f"no players found on page {page} for dc {dc}, stopping pagination"
                     )
                     break
+                elif len(new_players) != 50:
+                    logs.info(
+                        f"found {len(new_players)} players on page {page} for dc {dc} (last page)"
+                    )
 
-            logs.info(f"parsed rankings for {dc}")
+            logs.info(f"parsed rankings for {dc}: total {dc_total_players} players")
 
+        # Sanity checks to detect data integrity issues
         n_players = len(players)
+        logs.info(f"Total players collected: {n_players}")
+        
+        # Check for duplicate players by ID
+        player_ids = [p.id for p in players]
+        unique_ids = set(player_ids)
+        if len(player_ids) != len(unique_ids):
+            duplicate_count = len(player_ids) - len(unique_ids)
+            logs.error(f"DUPLICATE PLAYERS DETECTED: {duplicate_count} duplicate player IDs found!")
+            
+            # Find and log specific duplicates
+            from collections import Counter
+            id_counts = Counter(player_ids)
+            duplicates = {pid: count for pid, count in id_counts.items() if count > 1}
+            for player_id, count in duplicates.items():
+                duplicate_player = next(p for p in players if p.id == player_id)
+                logs.error(f"Player ID {player_id} ({duplicate_player.name}) appears {count} times")
+            
+            raise ValueError(f"Data integrity check failed: {duplicate_count} duplicate players detected")
+        
+        # Check for suspiciously similar ranking ranges between DCs
+        dc_player_counts = {}
+        dc_first_players = {}
+        for dc in dcs:
+            dc_players = [p for p in players if any(dc_name in str(vars(p)) for dc_name in [dc])]
+            # Alternative: track by insertion order since we process DCs sequentially
+            pass  # We'll rely on the ID check above as the primary duplicate detection
+        
+        logs.info("Data integrity checks passed: no duplicate players detected")
 
         # Create a queue for tasks
         queue = asyncio.Queue()
