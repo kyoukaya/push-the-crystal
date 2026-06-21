@@ -1,8 +1,10 @@
 from statistics import median
-from typing import Any, List, Tuple
+from collections import Counter
+from typing import Any, Dict, List, Tuple
 from bs4 import BeautifulSoup
 import httpx
 import time
+import sys
 import csv
 import asyncio
 from urllib.parse import urlparse
@@ -28,10 +30,10 @@ async def get_data_centers(client: httpx.AsyncClient) -> List[str]:
     if r.status_code != 200:
         logs.error(f"Failed to fetch data centers page: {r.status_code}")
         raise httpx.HTTPError(str(r.status_code))
-    
+
     soup = BeautifulSoup(r.text, "html.parser")
     dc_links = soup.find_all("a", href=lambda x: x and "dcgroup=" in x)
-    
+
     data_centers = []
     for link in dc_links:
         href = link.get("href", "")
@@ -40,7 +42,7 @@ async def get_data_centers(client: httpx.AsyncClient) -> List[str]:
             dc_name = href.split("dcgroup=")[1].split("&")[0]
             if dc_name not in data_centers:
                 data_centers.append(dc_name)
-    
+
     logs.info(f"Found data centers: {data_centers}")
     return data_centers
 
@@ -117,6 +119,7 @@ class Player:
         )
 
     def parse_rankings(self, v: BeautifulSoup):
+        """Populate rank/world/points/wins/tier/portrait fields from a ranking_set element."""
         self.name = v.h3.text
         if len(self.name) == 0:
             raise Exception(f"name cannot be empty: {v.prettify()}")
@@ -161,6 +164,7 @@ class Player:
             self.wins, self.wins_delta = 0, 0
 
     def parse_job(self, v: BeautifulSoup):
+        """Resolve the job abbreviation from the character page's class icon, falling back to "UNK" if the icon is missing or not in jobicomap."""
         try:
             url = urlparse(v.find(class_="character__class_icon").img["src"])
             self.job = jobicomap[url.path]
@@ -182,6 +186,7 @@ def parse_points_or_wins(s: str) -> Tuple[int, int]:
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=2, period=1)
 async def get_ranking(client: httpx.AsyncClient, dc: str, page: int) -> str:
+    """Fetch one page of the crystalline conflict ranking listing for a data center."""
     r = await client.get(
         f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}&page={page}"
     )
@@ -198,6 +203,7 @@ get_player_stats = []
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=3, period=1)
 async def get_player(client: httpx.AsyncClient, pid: int) -> str:
+    """Fetch a player's Lodestone character page; returns "" on a 403 (blocked/private)."""
     r = await client.get(f"{base_url}/lodestone/character/{pid}")
     if r.status_code == 403:
         return ""
@@ -217,7 +223,19 @@ def parse_rankings(v: BeautifulSoup) -> List[Player]:
     return players
 
 
+def check_duplicate_player_ids(players: List[Player]) -> Dict[int, int]:
+    """Return a mapping of player id -> count, for ids that appear more than once."""
+    id_counts = Counter(p.id for p in players)
+    return {pid: count for pid, count in id_counts.items() if count > 1}
+
+
+def count_unknown_jobs(players: List[Player]) -> int:
+    """Count players whose job icon couldn't be matched (stale jobicomap or failed fetch)."""
+    return sum(1 for p in players if p.job == "UNK")
+
+
 def save_rankings(players: List[Player]):
+    """Write all players to archive/YYYY_MM_DD.csv (UTC date), one row per player."""
     filename = "./archive/" + datetime.now(pytz.utc).strftime("%Y_%m_%d.csv")
     with open(filename, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, vars(players[0]).keys())
@@ -229,6 +247,7 @@ def save_rankings(players: List[Player]):
 async def worker(
     name: str, queue: asyncio.Queue, client: httpx.AsyncClient, n_players: int
 ):
+    """Pull players off the queue and fetch/parse their job in parallel until cancelled."""
     while True:
         try:
             # Get task from queue
@@ -248,20 +267,28 @@ async def worker(
             break
 
 
-async def main():
+async def main() -> bool:
+    """Scrape and archive rankings. Returns False if any sanity check failed.
+
+    Archiving always happens if any players were collected, even when sanity
+    checks fail, so a bad run still leaves data behind for inspection - the
+    caller is responsible for surfacing the failure (e.g. failing CI).
+    """
     logs.info("parser started")
     t0 = time.time()
     players: List[Player] = []
+    issues: List[str] = []
 
     async with httpx.AsyncClient(http2=True) as client:
         # Get available data centers dynamically
         dcs = await get_data_centers(client)
-        
+
         # Sanity check: ensure we found a reasonable number of data centers
         if len(dcs) < 2:
-            logs.error(f"Only found {len(dcs)} data centers: {dcs}. Expected at least 2.")
-            raise ValueError(f"Data center discovery failed: only found {len(dcs)} data centers")
-        
+            msg = f"Only found {len(dcs)} data centers: {dcs}. Expected at least 2."
+            logs.error(msg)
+            issues.append(msg)
+
         # Fetch all players first
         for dc in dcs:
             dc_total_players = 0
@@ -273,10 +300,10 @@ async def main():
                     logs.info(f"page {page}: found {len(new_players)} players, first: {new_players[0].name} (rank {new_players[0].cur_rank}), last: {new_players[-1].name} (rank {new_players[-1].cur_rank})")
                 else:
                     logs.info(f"page {page}: found 0 players")
-                
+
                 players.extend(new_players)
                 dc_total_players += len(new_players)
-                
+
                 if len(new_players) == 0:
                     logs.warning(
                         f"no players found on page {page} for dc {dc}, stopping pagination"
@@ -289,65 +316,67 @@ async def main():
 
             logs.info(f"parsed rankings for {dc}: total {dc_total_players} players")
 
-        # Sanity checks to detect data integrity issues
         n_players = len(players)
         logs.info(f"Total players collected: {n_players}")
-        
+
         # Check for duplicate players by ID
-        player_ids = [p.id for p in players]
-        unique_ids = set(player_ids)
-        if len(player_ids) != len(unique_ids):
-            duplicate_count = len(player_ids) - len(unique_ids)
-            logs.error(f"DUPLICATE PLAYERS DETECTED: {duplicate_count} duplicate player IDs found!")
-            
-            # Find and log specific duplicates
-            from collections import Counter
-            id_counts = Counter(player_ids)
-            duplicates = {pid: count for pid, count in id_counts.items() if count > 1}
+        duplicates = check_duplicate_player_ids(players)
+        if duplicates:
+            logs.error(f"DUPLICATE PLAYERS DETECTED: {len(duplicates)} duplicate player IDs found!")
             for player_id, count in duplicates.items():
                 duplicate_player = next(p for p in players if p.id == player_id)
                 logs.error(f"Player ID {player_id} ({duplicate_player.name}) appears {count} times")
-            
-            raise ValueError(f"Data integrity check failed: {duplicate_count} duplicate players detected")
-        
-        # Check for suspiciously similar ranking ranges between DCs
-        dc_player_counts = {}
-        dc_first_players = {}
-        for dc in dcs:
-            dc_players = [p for p in players if any(dc_name in str(vars(p)) for dc_name in [dc])]
-            # Alternative: track by insertion order since we process DCs sequentially
-            pass  # We'll rely on the ID check above as the primary duplicate detection
-        
-        logs.info("Data integrity checks passed: no duplicate players detected")
+            issues.append(f"{len(duplicates)} duplicate player ID(s) detected")
+        else:
+            logs.info("Data integrity check passed: no duplicate players detected")
 
-        # Create a queue for tasks
-        queue = asyncio.Queue()
+        if players:
+            # Create a queue for tasks
+            queue = asyncio.Queue()
 
-        workers = [
-            asyncio.create_task(worker(f"worker-{i}", queue, client, n_players))
-            for i in range(3)
-        ]
+            workers = [
+                asyncio.create_task(worker(f"worker-{i}", queue, client, n_players))
+                for i in range(3)
+            ]
 
-        # Add all players to the queue
-        for i, player in enumerate(players):
-            await queue.put((i, player))
+            # Add all players to the queue
+            for i, player in enumerate(players):
+                await queue.put((i, player))
 
-        # Wait for all tasks to complete
-        await queue.join()
+            # Wait for all tasks to complete
+            await queue.join()
 
-        # Cancel workers
-        for w in workers:
-            w.cancel()
+            # Cancel workers
+            for w in workers:
+                w.cancel()
 
-        # Wait for workers to finish
-        await asyncio.gather(*workers, return_exceptions=True)
+            # Wait for workers to finish
+            await asyncio.gather(*workers, return_exceptions=True)
 
-    save_rankings(players)
+            unknown_jobs = count_unknown_jobs(players)
+            if unknown_jobs:
+                msg = f"{unknown_jobs} player(s) have an unrecognized job (jobicomap may be missing an entry, or their character page failed to load)"
+                logs.error(msg)
+                issues.append(msg)
+
+    if players:
+        save_rankings(players)
+        logs.info(f"saved {len(players)} players to archive")
+    else:
+        logs.error("No players collected, nothing to archive")
+        issues.append("No players collected")
+
     logs.info(f"parsing finished, total time taken {time.time() - t0}s")
-    logs.info(
-        f"get_player_stats: {min(get_player_stats)}, {max(get_player_stats)}, {median(get_player_stats)}"
-    )
+    if get_player_stats:
+        logs.info(
+            f"get_player_stats: {min(get_player_stats)}, {max(get_player_stats)}, {median(get_player_stats)}"
+        )
+
+    if issues:
+        logs.error(f"Run completed with {len(issues)} issue(s): {issues}")
+        return False
+    return True
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(0 if asyncio.run(main()) else 1)

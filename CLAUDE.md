@@ -18,6 +18,12 @@ python main.py
 pip install -r requirements.txt
 ```
 
+### Running tests
+```bash
+python -m unittest test_main.py
+```
+Tests use `unittest` (including `IsolatedAsyncioTestCase` for async functions) and mock `httpx.AsyncClient` rather than hitting the live Lodestone site. `test_data/` contains real saved HTML pages (`ranking_elemental.html`, `player_28151111.html`) for reference when updating parsing logic, though they aren't currently loaded by `test_main.py`.
+
 ### Code formatting (if needed)
 ```bash
 autopep8 --in-place --recursive .
@@ -27,27 +33,23 @@ autopep8 --in-place --recursive .
 
 ### Core Components
 
-- **main.py**: Single-file application containing all scraping logic
-- **Player class**: Data structure representing a ranked player with parsing methods
-  - `parse_rankings()`: Extracts player data from ranking pages
-  - `parse_job()`: Extracts job/class information from player character pages
-- **Async scraping system**: Uses httpx with rate limiting and retry logic
-  - `get_ranking()`: Fetches ranking pages for data centers
-  - `get_player()`: Fetches individual player character pages  
-  - `worker()`: Async worker for processing player data in parallel
+Everything lives in `main.py` (single-file application). Function/method docstrings there describe behavior — start with:
+- **Player class**: `parse_rankings()`, `parse_job()`
+- **Async scraping**: `get_data_centers()`, `get_ranking()`, `get_player()`, `worker()`
 
 ### Data Flow
 
-1. Scrapes ranking pages for each data center (Chaos, Materia, Primal, Gaia)
-2. Parses player ranking data from HTML using BeautifulSoup
-3. Asynchronously fetches individual player pages to get job/class data
-4. Saves all player data to CSV file in `archive/` directory with YYYY_MM_DD.csv format
+1. `get_data_centers()` discovers data centers dynamically from the main ranking page
+2. `get_ranking()` + `Player.parse_rankings()` scrape ranking pages 1-6 per data center, stopping early once a page returns zero players
+3. `worker()` + `Player.parse_job()` asynchronously fetch each player's character page for job/class data
+4. `save_rankings()` writes everything to `archive/YYYY_MM_DD.csv` (UTC date)
 
 ### Rate Limiting & Error Handling
 
 - Rate limited to 2 calls/second for rankings, 3 calls/second for player pages
 - Exponential backoff retry logic with up to 8 attempts
 - Comprehensive error handling for HTTP errors and parsing failures
+- Sanity checks (data center count, duplicate player IDs, unrecognized job icons) are non-fatal — see the `main()` docstring in main.py and the comments in `update.yml` for how archiving vs. CI failure are decoupled
 
 ### Data Structure
 

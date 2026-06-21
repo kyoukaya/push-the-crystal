@@ -16,9 +16,18 @@ jobs:
                 python-version: '3.13.x'
                 cache: 'pip'
             - run: pip install -r requirements.txt
+            # main.py exits non-zero on sanity-check failures (e.g. unknown jobs)
+            # but still writes the archive. continue-on-error keeps the job going
+            # so that archive gets committed below; the step after the commit
+            # turns the job red again so the failure isn't silently swallowed.
             - name: Scrape lodestone
+              id: scrape
+              continue-on-error: true
               run: python main.py
             - name: Update repo with rankings
               uses: stefanzweifel/git-auto-commit-action@v4
               with:
                   commit_message: automated update
+            - name: Fail workflow if scrape reported issues
+              if: steps.scrape.outcome == 'failure'
+              run: exit 1
