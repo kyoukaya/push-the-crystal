@@ -33,23 +33,16 @@ autopep8 --in-place --recursive .
 
 ### Core Components
 
-- **main.py**: Single-file application containing all scraping logic
-- **Player class**: Data structure representing a ranked player with parsing methods
-  - `parse_rankings()`: Extracts player data from ranking pages
-  - `parse_job()`: Extracts job/class information from player character pages
-- **Async scraping system**: Uses httpx with rate limiting and retry logic
-  - `get_data_centers()`: Discovers the current list of data centers from the main ranking page (not hardcoded)
-  - `get_ranking()`: Fetches ranking pages for a given data center/page
-  - `get_player()`: Fetches individual player character pages
-  - `worker()`: Async worker pool (3 workers) consuming a queue to fetch/parse player jobs in parallel
+Everything lives in `main.py` (single-file application). Function/method docstrings there describe behavior — start with:
+- **Player class**: `parse_rankings()`, `parse_job()`
+- **Async scraping**: `get_data_centers()`, `get_ranking()`, `get_player()`, `worker()`
 
 ### Data Flow
 
-1. Discovers data centers dynamically by parsing `dcgroup=` links off the main crystalline conflict ranking page
-2. Scrapes ranking pages 1-6 per data center, stopping early for a DC once a page returns zero players
-3. Parses player ranking data from HTML using BeautifulSoup
-4. Asynchronously fetches individual player pages to get job/class data
-5. Saves all player data to a CSV file in `archive/` directory named `YYYY_MM_DD.csv` (UTC date)
+1. `get_data_centers()` discovers data centers dynamically from the main ranking page
+2. `get_ranking()` + `Player.parse_rankings()` scrape ranking pages 1-6 per data center, stopping early once a page returns zero players
+3. `worker()` + `Player.parse_job()` asynchronously fetch each player's character page for job/class data
+4. `save_rankings()` writes everything to `archive/YYYY_MM_DD.csv` (UTC date)
 
 ### Rate Limiting & Error Handling
 

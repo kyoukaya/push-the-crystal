@@ -119,6 +119,7 @@ class Player:
         )
 
     def parse_rankings(self, v: BeautifulSoup):
+        """Populate rank/world/points/wins/tier/portrait fields from a ranking_set element."""
         self.name = v.h3.text
         if len(self.name) == 0:
             raise Exception(f"name cannot be empty: {v.prettify()}")
@@ -163,6 +164,7 @@ class Player:
             self.wins, self.wins_delta = 0, 0
 
     def parse_job(self, v: BeautifulSoup):
+        """Resolve the job abbreviation from the character page's class icon, falling back to "UNK" if the icon is missing or not in jobicomap."""
         try:
             url = urlparse(v.find(class_="character__class_icon").img["src"])
             self.job = jobicomap[url.path]
@@ -184,6 +186,7 @@ def parse_points_or_wins(s: str) -> Tuple[int, int]:
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=2, period=1)
 async def get_ranking(client: httpx.AsyncClient, dc: str, page: int) -> str:
+    """Fetch one page of the crystalline conflict ranking listing for a data center."""
     r = await client.get(
         f"{base_url}/lodestone/ranking/crystallineconflict/?dcgroup={dc}&page={page}"
     )
@@ -200,6 +203,7 @@ get_player_stats = []
 @on_exception(expo, httpx.HTTPError, max_tries=8)
 @limits(calls=3, period=1)
 async def get_player(client: httpx.AsyncClient, pid: int) -> str:
+    """Fetch a player's Lodestone character page; returns "" on a 403 (blocked/private)."""
     r = await client.get(f"{base_url}/lodestone/character/{pid}")
     if r.status_code == 403:
         return ""
@@ -231,6 +235,7 @@ def count_unknown_jobs(players: List[Player]) -> int:
 
 
 def save_rankings(players: List[Player]):
+    """Write all players to archive/YYYY_MM_DD.csv (UTC date), one row per player."""
     filename = "./archive/" + datetime.now(pytz.utc).strftime("%Y_%m_%d.csv")
     with open(filename, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, vars(players[0]).keys())
@@ -242,6 +247,7 @@ def save_rankings(players: List[Player]):
 async def worker(
     name: str, queue: asyncio.Queue, client: httpx.AsyncClient, n_players: int
 ):
+    """Pull players off the queue and fetch/parse their job in parallel until cancelled."""
     while True:
         try:
             # Get task from queue
