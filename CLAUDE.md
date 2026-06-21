@@ -49,16 +49,14 @@ autopep8 --in-place --recursive .
 2. Scrapes ranking pages 1-6 per data center, stopping early for a DC once a page returns zero players
 3. Parses player ranking data from HTML using BeautifulSoup
 4. Asynchronously fetches individual player pages to get job/class data
-5. Saves all player data to a CSV file in `archive/` directory named `YYYY_MM_DD.csv` (UTC date) — as long as at least one player was scraped, this happens regardless of whether sanity checks below passed
-6. Returns `False` from `main()` (and a non-zero process exit code) if any sanity check failed, so a bad run still leaves data behind but is visible as a failure
+5. Saves all player data to a CSV file in `archive/` directory named `YYYY_MM_DD.csv` (UTC date)
 
 ### Rate Limiting & Error Handling
 
 - Rate limited to 2 calls/second for rankings, 3 calls/second for player pages
 - Exponential backoff retry logic with up to 8 attempts
 - Comprehensive error handling for HTTP errors and parsing failures
-- Sanity checks (too few data centers found, duplicate player IDs via `check_duplicate_player_ids()`, unrecognized job icons via `count_unknown_jobs()`) are collected as non-fatal issues rather than raised — the run always archives whatever it collected, then exits non-zero if any issue was found. This intentionally decouples "did we get data" from "was the data trustworthy," since failing fast would have meant losing a day's archive instead of just flagging it.
-- The GitHub Actions workflow relies on this: the scrape step uses `continue-on-error: true` so the commit step still runs and archives partial/flagged data, then a final step fails the job if the scrape step's outcome was a failure — keeping the archive committed while still surfacing the failure in CI
+- Sanity checks (data center count, duplicate player IDs, unrecognized job icons) are non-fatal — see the `main()` docstring in main.py and the comments in `update.yml` for how archiving vs. CI failure are decoupled
 
 ### Data Structure
 
