@@ -18,6 +18,12 @@ python main.py
 pip install -r requirements.txt
 ```
 
+### Running tests
+```bash
+python -m unittest test_main.py
+```
+Tests use `unittest` (including `IsolatedAsyncioTestCase` for async functions) and mock `httpx.AsyncClient` rather than hitting the live Lodestone site. `test_data/` contains real saved HTML pages (`ranking_elemental.html`, `player_28151111.html`) for reference when updating parsing logic, though they aren't currently loaded by `test_main.py`.
+
 ### Code formatting (if needed)
 ```bash
 autopep8 --in-place --recursive .
@@ -32,22 +38,27 @@ autopep8 --in-place --recursive .
   - `parse_rankings()`: Extracts player data from ranking pages
   - `parse_job()`: Extracts job/class information from player character pages
 - **Async scraping system**: Uses httpx with rate limiting and retry logic
-  - `get_ranking()`: Fetches ranking pages for data centers
-  - `get_player()`: Fetches individual player character pages  
-  - `worker()`: Async worker for processing player data in parallel
+  - `get_data_centers()`: Discovers the current list of data centers from the main ranking page (not hardcoded)
+  - `get_ranking()`: Fetches ranking pages for a given data center/page
+  - `get_player()`: Fetches individual player character pages
+  - `worker()`: Async worker pool (3 workers) consuming a queue to fetch/parse player jobs in parallel
 
 ### Data Flow
 
-1. Scrapes ranking pages for each data center (Chaos, Materia, Primal, Gaia)
-2. Parses player ranking data from HTML using BeautifulSoup
-3. Asynchronously fetches individual player pages to get job/class data
-4. Saves all player data to CSV file in `archive/` directory with YYYY_MM_DD.csv format
+1. Discovers data centers dynamically by parsing `dcgroup=` links off the main crystalline conflict ranking page
+2. Scrapes ranking pages 1-6 per data center, stopping early for a DC once a page returns zero players
+3. Parses player ranking data from HTML using BeautifulSoup
+4. Asynchronously fetches individual player pages to get job/class data
+5. Saves all player data to a CSV file in `archive/` directory named `YYYY_MM_DD.csv` (UTC date) — as long as at least one player was scraped, this happens regardless of whether sanity checks below passed
+6. Returns `False` from `main()` (and a non-zero process exit code) if any sanity check failed, so a bad run still leaves data behind but is visible as a failure
 
 ### Rate Limiting & Error Handling
 
 - Rate limited to 2 calls/second for rankings, 3 calls/second for player pages
 - Exponential backoff retry logic with up to 8 attempts
 - Comprehensive error handling for HTTP errors and parsing failures
+- Sanity checks (too few data centers found, duplicate player IDs via `check_duplicate_player_ids()`, unrecognized job icons via `count_unknown_jobs()`) are collected as non-fatal issues rather than raised — the run always archives whatever it collected, then exits non-zero if any issue was found. This intentionally decouples "did we get data" from "was the data trustworthy," since failing fast would have meant losing a day's archive instead of just flagging it.
+- The GitHub Actions workflow relies on this: the scrape step uses `continue-on-error: true` so the commit step still runs and archives partial/flagged data, then a final step fails the job if the scrape step's outcome was a failure — keeping the archive committed while still surfacing the failure in CI
 
 ### Data Structure
 

@@ -7,7 +7,13 @@ import os
 # Add the current directory to the path to import main
 sys.path.insert(0, os.path.dirname(__file__))
 
-from main import Player, get_data_centers, parse_rankings
+from main import (
+    Player,
+    get_data_centers,
+    parse_rankings,
+    check_duplicate_player_ids,
+    count_unknown_jobs,
+)
 from bs4 import BeautifulSoup
 import httpx
 
@@ -55,6 +61,59 @@ class TestPlayer(unittest.TestCase):
         self.assertEqual(player.tier, "Crystal")
         self.assertEqual(player.wins, 100)
         self.assertEqual(player.wins_delta, 5)
+
+
+class TestParseJob(unittest.TestCase):
+    def test_parse_job_known_icon(self):
+        """A known job icon URL should map to the correct job abbreviation."""
+        html = """
+        <div class="character__class_icon">
+            <img src="https://img.finalfantasyxiv.com/h/E/d0Tx-vhnsMYfYpGe9MvslemEfg.png"/>
+        </div>
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        player = Player()
+        player.parse_job(soup)
+        self.assertEqual(player.job, "PLD")
+
+    def test_parse_job_unknown_icon(self):
+        """An icon URL missing from jobicomap should fall back to UNK, not raise."""
+        html = """
+        <div class="character__class_icon">
+            <img src="https://img.finalfantasyxiv.com/h/Z/not_a_real_job_icon.png"/>
+        </div>
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        player = Player()
+        player.parse_job(soup)
+        self.assertEqual(player.job, "UNK")
+
+    def test_parse_job_missing_icon(self):
+        """A page with no class icon at all (e.g. a blocked fetch) should fall back to UNK."""
+        soup = BeautifulSoup("<html><body></body></html>", 'html.parser')
+        player = Player()
+        player.parse_job(soup)
+        self.assertEqual(player.job, "UNK")
+
+
+class TestUnknownJobDetection(unittest.TestCase):
+    def _make_player(self, job: str) -> Player:
+        player = Player()
+        player.job = job
+        return player
+
+    def test_counts_only_unk(self):
+        players = [
+            self._make_player("PLD"),
+            self._make_player("UNK"),
+            self._make_player("WHM"),
+            self._make_player("UNK"),
+        ]
+        self.assertEqual(count_unknown_jobs(players), 2)
+
+    def test_zero_when_all_known(self):
+        players = [self._make_player("PLD"), self._make_player("WHM")]
+        self.assertEqual(count_unknown_jobs(players), 0)
 
 
 class TestDataCenterParsing(unittest.IsolatedAsyncioTestCase):
@@ -111,62 +170,35 @@ class TestDataCenterParsing(unittest.IsolatedAsyncioTestCase):
 
 
 class TestDuplicateDetection(unittest.TestCase):
+    def _make_player(self, pid: int, name: str) -> Player:
+        player = Player()
+        player.id = pid
+        player.name = name
+        return player
+
     def test_duplicate_detection_logic(self):
-        """Test the duplicate detection logic with mock players."""
-        # Create mock players with some duplicates
-        player1 = Player()
-        player1.id = 123
-        player1.name = "Player One"
-        
-        player2 = Player()
-        player2.id = 456
-        player2.name = "Player Two"
-        
-        player3 = Player()
-        player3.id = 123  # Duplicate ID
-        player3.name = "Player One Duplicate"
-        
-        players = [player1, player2, player3]
-        
-        # Test the duplicate detection logic
-        player_ids = [p.id for p in players]
-        unique_ids = set(player_ids)
-        
-        # Should detect 1 duplicate (3 total - 2 unique = 1 duplicate)
-        self.assertNotEqual(len(player_ids), len(unique_ids))
-        self.assertEqual(len(player_ids) - len(unique_ids), 1)
-        
-        # Find specific duplicates
-        from collections import Counter
-        id_counts = Counter(player_ids)
-        duplicates = {pid: count for pid, count in id_counts.items() if count > 1}
-        
-        self.assertEqual(len(duplicates), 1)
-        self.assertEqual(duplicates[123], 2)
+        """check_duplicate_player_ids should report ids appearing more than once."""
+        players = [
+            self._make_player(123, "Player One"),
+            self._make_player(456, "Player Two"),
+            self._make_player(123, "Player One Duplicate"),
+        ]
+
+        duplicates = check_duplicate_player_ids(players)
+
+        self.assertEqual(duplicates, {123: 2})
 
     def test_no_duplicates(self):
-        """Test that no duplicates are detected when all players are unique."""
-        # Create mock players with unique IDs
-        player1 = Player()
-        player1.id = 123
-        player1.name = "Player One"
-        
-        player2 = Player()
-        player2.id = 456
-        player2.name = "Player Two"
-        
-        player3 = Player()
-        player3.id = 789
-        player3.name = "Player Three"
-        
-        players = [player1, player2, player3]
-        
-        # Test the duplicate detection logic
-        player_ids = [p.id for p in players]
-        unique_ids = set(player_ids)
-        
-        # Should detect no duplicates
-        self.assertEqual(len(player_ids), len(unique_ids))
+        """check_duplicate_player_ids should return an empty mapping when all ids are unique."""
+        players = [
+            self._make_player(123, "Player One"),
+            self._make_player(456, "Player Two"),
+            self._make_player(789, "Player Three"),
+        ]
+
+        duplicates = check_duplicate_player_ids(players)
+
+        self.assertEqual(duplicates, {})
 
 
 class TestMainIntegration(unittest.TestCase):

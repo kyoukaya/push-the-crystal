@@ -17,8 +17,13 @@ jobs:
                 cache: 'pip'
             - run: pip install -r requirements.txt
             - name: Scrape lodestone
+              id: scrape
+              continue-on-error: true
               run: python main.py
             - name: Update repo with rankings
               uses: stefanzweifel/git-auto-commit-action@v4
               with:
                   commit_message: automated update
+            - name: Fail workflow if scrape reported issues
+              if: steps.scrape.outcome == 'failure'
+              run: exit 1
