@@ -73,11 +73,11 @@ class TestParseJob(unittest.TestCase):
         """
         soup = BeautifulSoup(html, 'html.parser')
         player = Player()
-        player.parse_job(soup)
+        self.assertFalse(player.parse_job(soup))
         self.assertEqual(player.job, "PLD")
 
     def test_parse_job_unknown_icon(self):
-        """An icon URL missing from jobicomap should fall back to UNK, not raise."""
+        """An icon URL missing from jobicomap should fall back to UNK and report a real mapping gap."""
         html = """
         <div class="character__class_icon">
             <img src="https://img.finalfantasyxiv.com/h/Z/not_a_real_job_icon.png"/>
@@ -85,14 +85,14 @@ class TestParseJob(unittest.TestCase):
         """
         soup = BeautifulSoup(html, 'html.parser')
         player = Player()
-        player.parse_job(soup)
+        self.assertTrue(player.parse_job(soup))
         self.assertEqual(player.job, "UNK")
 
     def test_parse_job_missing_icon(self):
-        """A page with no class icon at all (e.g. a blocked fetch) should fall back to UNK."""
+        """A page with no class icon at all (e.g. a blocked fetch) should fall back to UNK without reporting a mapping gap."""
         soup = BeautifulSoup("<html><body></body></html>", 'html.parser')
         player = Player()
-        player.parse_job(soup)
+        self.assertFalse(player.parse_job(soup))
         self.assertEqual(player.job, "UNK")
 
 

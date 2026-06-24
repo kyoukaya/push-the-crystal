@@ -163,14 +163,26 @@ class Player:
         except ValueError:
             self.wins, self.wins_delta = 0, 0
 
-    def parse_job(self, v: BeautifulSoup):
-        """Resolve the job abbreviation from the character page's class icon, falling back to "UNK" if the icon is missing or not in jobicomap."""
+    def parse_job(self, v: BeautifulSoup) -> bool:
+        """Resolve the job abbreviation from the character page's class icon, falling back to "UNK" if the icon is missing or not in jobicomap.
+
+        Returns True only when the icon loaded but its URL isn't in jobicomap - a real
+        mapping gap. Returns False when there was no icon to read at all (e.g. a private
+        profile that returned a blank page), which is expected and not a code issue.
+        """
         try:
-            url = urlparse(v.find(class_="character__class_icon").img["src"])
-            self.job = jobicomap[url.path]
+            icon = v.find(class_="character__class_icon").img
+        except AttributeError:
+            self.job = "UNK"
+            return False
+
+        try:
+            self.job = jobicomap[urlparse(icon["src"]).path]
+            return False
         except Exception as e:
             logs.error(f"failed to parse job: {e}")
             self.job = "UNK"
+            return True
 
 
 def parse_points_or_wins(s: str) -> Tuple[int, int]:
@@ -234,6 +246,10 @@ def count_unknown_jobs(players: List[Player]) -> int:
     return sum(1 for p in players if p.job == "UNK")
 
 
+unmapped_job_icons: List[int] = []
+"""IDs of players whose character page loaded but had a job icon missing from jobicomap - a real mapping gap, as opposed to a private profile that never loaded a page."""
+
+
 def save_rankings(players: List[Player]):
     """Write all players to archive/YYYY_MM_DD.csv (UTC date), one row per player."""
     filename = "./archive/" + datetime.now(pytz.utc).strftime("%Y_%m_%d.csv")
@@ -259,7 +275,8 @@ async def worker(
                     f"({i / n_players * 100:.1f}%)"
                 )
                 player_resp = await get_player(client, player.id)
-                player.parse_job(BeautifulSoup(player_resp, "html.parser"))
+                if player.parse_job(BeautifulSoup(player_resp, "html.parser")):
+                    unmapped_job_icons.append(player.id)
             finally:
                 # Always mark task as done, even if it fails
                 queue.task_done()
@@ -355,7 +372,11 @@ async def main() -> bool:
 
             unknown_jobs = count_unknown_jobs(players)
             if unknown_jobs:
-                msg = f"{unknown_jobs} player(s) have an unrecognized job (jobicomap may be missing an entry, or their character page failed to load)"
+                logs.info(
+                    f"{unknown_jobs} player(s) have job UNK, most likely private/inaccessible profiles"
+                )
+            if unmapped_job_icons:
+                msg = f"{len(unmapped_job_icons)} player(s) had a job icon missing from jobicomap: {unmapped_job_icons}"
                 logs.error(msg)
                 issues.append(msg)
 
