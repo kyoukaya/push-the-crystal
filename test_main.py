@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from main import (
     Player,
     get_data_centers,
+    get_player,
     parse_rankings,
     check_duplicate_player_ids,
     count_unknown_jobs,
@@ -73,11 +74,11 @@ class TestParseJob(unittest.TestCase):
         """
         soup = BeautifulSoup(html, 'html.parser')
         player = Player()
-        player.parse_job(soup)
+        self.assertFalse(player.parse_job(soup))
         self.assertEqual(player.job, "PLD")
 
     def test_parse_job_unknown_icon(self):
-        """An icon URL missing from jobicomap should fall back to UNK, not raise."""
+        """An icon URL missing from jobicomap should fall back to UNK and report a real mapping gap."""
         html = """
         <div class="character__class_icon">
             <img src="https://img.finalfantasyxiv.com/h/Z/not_a_real_job_icon.png"/>
@@ -85,14 +86,14 @@ class TestParseJob(unittest.TestCase):
         """
         soup = BeautifulSoup(html, 'html.parser')
         player = Player()
-        player.parse_job(soup)
+        self.assertTrue(player.parse_job(soup))
         self.assertEqual(player.job, "UNK")
 
     def test_parse_job_missing_icon(self):
-        """A page with no class icon at all (e.g. a blocked fetch) should fall back to UNK."""
+        """A page with no class icon at all (e.g. a blocked fetch) should fall back to UNK without reporting a mapping gap."""
         soup = BeautifulSoup("<html><body></body></html>", 'html.parser')
         player = Player()
-        player.parse_job(soup)
+        self.assertFalse(player.parse_job(soup))
         self.assertEqual(player.job, "UNK")
 
 
@@ -167,6 +168,22 @@ class TestDataCenterParsing(unittest.IsolatedAsyncioTestCase):
         
         dcs = await get_data_centers(self.client)
         self.assertEqual(dcs, [])
+
+
+class TestGetPlayer(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.client = AsyncMock(spec=httpx.AsyncClient)
+
+    async def test_get_player_403_returns_empty_string(self):
+        """A 403 (private/blocked profile) should return "" instead of raising or retrying."""
+        mock_response = Mock()
+        mock_response.status_code = 403
+        self.client.get.return_value = mock_response
+
+        result = await get_player(self.client, 12345)
+
+        self.assertEqual(result, "")
+        self.client.get.assert_called_once()
 
 
 class TestDuplicateDetection(unittest.TestCase):
