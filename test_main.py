@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from main import (
     Player,
     get_data_centers,
+    get_player,
     parse_rankings,
     check_duplicate_player_ids,
     count_unknown_jobs,
@@ -167,6 +168,22 @@ class TestDataCenterParsing(unittest.IsolatedAsyncioTestCase):
         
         dcs = await get_data_centers(self.client)
         self.assertEqual(dcs, [])
+
+
+class TestGetPlayer(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.client = AsyncMock(spec=httpx.AsyncClient)
+
+    async def test_get_player_403_returns_empty_string(self):
+        """A 403 (private/blocked profile) should return "" instead of raising or retrying."""
+        mock_response = Mock()
+        mock_response.status_code = 403
+        self.client.get.return_value = mock_response
+
+        result = await get_player(self.client, 12345)
+
+        self.assertEqual(result, "")
+        self.client.get.assert_called_once()
 
 
 class TestDuplicateDetection(unittest.TestCase):
