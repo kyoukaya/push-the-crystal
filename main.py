@@ -93,6 +93,7 @@ jobicomap = {
     "/h/g/_oYApASVVReLLmsokuCJGkEpk0.png": "SGE",
     "/h/C/WojNTqMJ_Ye1twvkIhw825zc20.png": "VPR",
     "/h/_/kLob-U-yh652LQPX1NHpLlUYQY.png": "PCT",
+    "/h/_/OFfyg3oiCvw6DQmECas-wZv01A.png": "BST",
 }
 
 
